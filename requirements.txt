@@ -1,0 +1,5 @@
+pyTelegramBotAPI
+requests
+openai
+twilio==8.10.0
+flask
