@@ -6,21 +6,23 @@ from email.mime.text import MIMEText
 
 app = Flask(__name__)
 
-# ENV VARIABLES
+# ENV
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# ---------------- TELEGRAM SEND ----------------
+user_data = {}
+
+# ---------------- TELEGRAM ----------------
 def send_telegram(message):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": CHAT_ID, "text": message})
-    except Exception as e:
-        print("Telegram error:", e)
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        json={"chat_id": CHAT_ID, "text": message}
+    )
 
-# ---------------- EMAIL SEND ----------------
+# ---------------- EMAIL ----------------
 def send_email(subject, body):
     try:
         msg = MIMEText(body)
@@ -28,63 +30,42 @@ def send_email(subject, body):
         msg["From"] = EMAIL_USER
         msg["To"] = EMAIL_USER
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.send_message(msg)
-
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.send_message(msg)
+        server.quit()
     except Exception as e:
         print("Email error:", e)
 
-# ---------------- HOME ----------------
-@app.route("/", methods=["GET"])
-def home():
-    return "MiserBot FULL System Running 🚀"
+# ---------------- AI RESPONSE ----------------
+def ai_reply(user_message):
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}"
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": "You are a professional AI business assistant for GetMiserBot. Speak clearly, professionally, and help qualify the user."},
+                    {"role": "user", "content": user_message}
+                ]
+            }
+        )
 
-# ---------------- TEST ----------------
-@app.route("/test", methods=["GET"])
-def test():
-    message = """
-🔥 TEST LEAD 🔥
+        return response.json()["choices"][0]["message"]["content"]
 
-Name: Test User
-Email: test@test.com
-Phone: 1234567890
-"""
-    send_telegram(message)
-    send_email("Test Lead", message)
-    return "Test sent ✅"
+    except Exception as e:
+        print("AI error:", e)
+        return "Thank you for reaching out. Could you provide more details about your request?"
 
-# ---------------- LEAD CAPTURE ----------------
-@app.route("/lead", methods=["POST"])
-def capture_lead():
-    data = request.json
-
-    name = data.get("name", "N/A")
-    email = data.get("email", "N/A")
-    phone = data.get("phone", "N/A")
-
-    message = f"""
-🔥 NEW LEAD 🔥
-
-Name: {name}
-Email: {email}
-Phone: {phone}
-"""
-
-    send_telegram(message)
-    send_email("New Lead", message)
-
-    return jsonify({"status": "success"})
-
-# ---------------- SMART TELEGRAM RECEPTIONIST ----------------
-user_data = {}
-
+# ---------------- WEBHOOK ----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
     message = data.get("message", {})
 
-    # 🚨 STOP LOOP (IGNORE BOT MESSAGES)
     if message.get("from", {}).get("is_bot"):
         return "ok"
 
@@ -94,60 +75,57 @@ def webhook():
     if not chat_id:
         return "ok"
 
-    user = user_data.get(chat_id, {"step": 0})
+    user = user_data.get(chat_id, {"step": "intent"})
 
-    if user["step"] == 0:
-        reply = (
-            "👋 Welcome to GetMiserBot.com\n\n"
-            "We specialize in automated business solutions and client acquisition systems.\n\n"
-            "To better assist you, may I have your full name?"
-        )
-        user["step"] = 1
+    # STEP 1: Understand intent
+    if user["step"] == "intent":
+        user["intent"] = text
 
-    elif user["step"] == 1:
+        reply = ai_reply(text) + "\n\nTo better assist you, may I have your full name?"
+        user["step"] = "name"
+
+    elif user["step"] == "name":
         user["name"] = text
-        reply = (
-            f"Thank you, {user['name']}.\n\n"
-            "Could you please provide your best email address so our team can follow up?"
-        )
-        user["step"] = 2
+        reply = "Thank you. Please provide your email address."
+        user["step"] = "email"
 
-    elif user["step"] == 2:
+    elif user["step"] == "email":
         user["email"] = text
-        reply = (
-            "Great, thank you.\n\n"
-            "Lastly, may we have a contact number for direct assistance?"
-        )
-        user["step"] = 3
+        reply = "Great. Lastly, your phone number?"
+        user["step"] = "phone"
 
-    elif user["step"] == 3:
+    elif user["step"] == "phone":
         user["phone"] = text
 
-        message_text = f"""
+        lead = f"""
 🔥 NEW LEAD 🔥
 
+Service: {user.get('intent')}
 Name: {user['name']}
 Email: {user['email']}
 Phone: {user['phone']}
 """
 
-        send_telegram(message_text)
-        send_email("New Lead", message_text)
+        send_telegram(lead)
+        send_email("New Lead", lead)
 
-        reply = (
-            "✅ Thank you for your information.\n\n"
-            "A representative from GetMiserBot will be contacting you shortly.\n\n"
-            "We appreciate your interest."
-        )
+        reply = "✅ Thank you. Our team will contact you shortly."
 
-        user = {"step": 0}
+        user = {"step": "intent"}
 
     user_data[chat_id] = user
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": chat_id, "text": reply})
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        json={"chat_id": chat_id, "text": reply}
+    )
 
     return "ok"
+
+# ---------------- HOME ----------------
+@app.route("/")
+def home():
+    return "MiserBot Claw Mode Running 🚀"
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
