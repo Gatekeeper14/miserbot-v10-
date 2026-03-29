@@ -18,22 +18,42 @@ def send_telegram(message):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": CHAT_ID, "text": message})
     except Exception as e:
-        print("Telegram error:", e)
+        print("❌ Telegram error:", e)
 
-# ---------------- EMAIL SEND ----------------
+# ---------------- EMAIL SEND (WITH DEBUG) ----------------
 def send_email(subject, body):
+    print("📧 Attempting to send email...")
+    print("EMAIL_USER:", EMAIL_USER)
+    print("EMAIL_PASS exists:", bool(EMAIL_PASS))
+
+    if not EMAIL_USER:
+        print("❌ EMAIL_USER missing")
+        return
+
+    if not EMAIL_PASS:
+        print("❌ EMAIL_PASS missing")
+        return
+
     try:
         msg = MIMEText(body)
         msg["Subject"] = subject
         msg["From"] = EMAIL_USER
         msg["To"] = EMAIL_USER
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.send_message(msg)
+        print("📧 Connecting to Gmail...")
+
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(EMAIL_USER, EMAIL_PASS)
+
+        print("📧 Logged in successfully")
+
+        server.send_message(msg)
+        server.quit()
+
+        print("✅ EMAIL SENT SUCCESSFULLY")
 
     except Exception as e:
-        print("Email error:", e)
+        print("❌ EMAIL FAILED:", str(e))
 
 # ---------------- HOME ----------------
 @app.route("/", methods=["GET"])
@@ -43,16 +63,12 @@ def home():
 # ---------------- TEST ----------------
 @app.route("/test", methods=["GET"])
 def test():
-    message = """
-🔥 TEST LEAD 🔥
+    message = "🔥 DIRECT EMAIL TEST 🔥"
 
-Name: Test User
-Email: test@test.com
-Phone: 1234567890
-"""
-    send_telegram(message)
+    send_telegram("📲 Running full system test...")
     send_email("Test Lead", message)
-    return "Test sent ✅"
+
+    return "Test triggered — check logs"
 
 # ---------------- LEAD CAPTURE ----------------
 @app.route("/lead", methods=["POST"])
@@ -84,7 +100,7 @@ def webhook():
     data = request.json
     message = data.get("message", {})
 
-    # 🚨 STOP LOOP (IGNORE BOT MESSAGES)
+    # 🚨 STOP LOOP
     if message.get("from", {}).get("is_bot"):
         return "ok"
 
