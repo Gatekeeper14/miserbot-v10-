@@ -50,10 +50,8 @@ Name: Test User
 Email: test@test.com
 Phone: 1234567890
 """
-
     send_telegram(message)
     send_email("Test Lead", message)
-
     return "Test sent ✅"
 
 # ---------------- LEAD CAPTURE ----------------
@@ -73,30 +71,58 @@ Email: {email}
 Phone: {phone}
 """
 
-    print("NEW LEAD:", name, email, phone)
-
     send_telegram(message)
     send_email("New Lead", message)
 
     return jsonify({"status": "success"})
 
-# ---------------- TELEGRAM RECEPTIONIST ----------------
+# ---------------- SMART TELEGRAM RECEPTIONIST ----------------
+user_data = {}
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-
     message = data.get("message", {})
     chat_id = message.get("chat", {}).get("id")
-    text = message.get("text", "")
+    text = message.get("text", "").strip()
 
     if not chat_id:
         return "ok"
 
-    # SIMPLE AUTO RESPONSE
-    reply = "👋 Welcome! Send your name, email, and phone and we’ll contact you."
+    user = user_data.get(chat_id, {"step": 0})
 
-    if "hi" in text.lower():
-        reply = "👋 Hey! Looking for services? Send your details and we’ll reach out."
+    if user["step"] == 0:
+        reply = "👋 Welcome! What's your name?"
+        user["step"] = 1
+
+    elif user["step"] == 1:
+        user["name"] = text
+        reply = "Great 👍 What's your email?"
+        user["step"] = 2
+
+    elif user["step"] == 2:
+        user["email"] = text
+        reply = "Perfect 📞 What's your phone number?"
+        user["step"] = 3
+
+    elif user["step"] == 3:
+        user["phone"] = text
+
+        message_text = f"""
+🔥 NEW LEAD 🔥
+
+Name: {user['name']}
+Email: {user['email']}
+Phone: {user['phone']}
+"""
+
+        send_telegram(message_text)
+        send_email("New Lead", message_text)
+
+        reply = "✅ Thank you! We'll contact you shortly."
+        user = {"step": 0}
+
+    user_data[chat_id] = user
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": chat_id, "text": reply})
