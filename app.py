@@ -4,18 +4,19 @@ import requests
 import os
 import smtplib
 from email.mime.text import MIMEText
+from threading import Thread
 
 app = Flask(__name__)
 
-# ✅ FIX CORS (allows Vercel to talk to Railway)
+# ✅ Enable CORS (Vercel → Railway)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# 🔐 ENV VARIABLES (make sure these exist in Railway)
+# 🔐 ENV VARIABLES (set in Railway)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 
-# 📧 EMAIL FUNCTION
+# 📧 EMAIL FUNCTION (stable)
 def send_email(subject, html):
     try:
         msg = MIMEText(html, "html")
@@ -23,21 +24,23 @@ def send_email(subject, html):
         msg["From"] = EMAIL_USER
         msg["To"] = EMAIL_USER
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.send_message(msg)
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.send_message(msg)
+        server.quit()
 
         print("✅ Email sent")
 
     except Exception as e:
-        print("❌ Email error:", e)
+        print("❌ EMAIL ERROR:", str(e))
 
-# 🌐 ROOT (for testing)
+# 🌐 ROOT
 @app.route("/", methods=["GET"])
 def home():
     return "MiserBot Website Ready 🚀"
 
-# 🧠 AI CHAT ENDPOINT
+# 🧠 AI CHAT (CONNECTED TO SITE)
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
@@ -60,13 +63,14 @@ def chat():
         )
 
         reply = response.json()["choices"][0]["message"]["content"]
+
         return jsonify({"reply": reply})
 
     except Exception as e:
         print("❌ Chat error:", e)
         return jsonify({"reply": "⚠️ AI error."})
 
-# 📥 LEAD FORM ENDPOINT
+# 📥 LEAD (NO TIMEOUT — ASYNC EMAIL)
 @app.route("/lead", methods=["POST"])
 def lead():
     try:
@@ -79,18 +83,29 @@ def lead():
 
         print("🔥 LEAD RECEIVED:", name, email, phone, service)
 
-        html = f"""
-        <h2>🌐 Website Lead</h2>
-        <p><b>Name:</b> {name}</p>
-        <p><b>Email:</b> {email}</p>
-        <p><b>Phone:</b> {phone}</p>
-        <p><b>Service:</b> {service}</p>
-        """
+        # 🚀 SEND EMAIL IN BACKGROUND (NO BLOCKING)
+        def send_async_email():
+            try:
+                html = f"""
+                <h2>🌐 Website Lead</h2>
+                <p><b>Name:</b> {name}</p>
+                <p><b>Email:</b> {email}</p>
+                <p><b>Phone:</b> {phone}</p>
+                <p><b>Service:</b> {service}</p>
+                """
+                send_email("New Website Lead", html)
+            except Exception as e:
+                print("⚠️ Email failed:", e)
 
-        send_email("New Website Lead", html)
+        Thread(target=send_async_email).start()
 
+        # ✅ INSTANT RESPONSE (NO TIMEOUT EVER)
         return jsonify({"status": "success"})
 
     except Exception as e:
         print("❌ Lead error:", e)
         return jsonify({"status": "error"})
+
+# 🚀 START APP (Railway uses this with Gunicorn)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
