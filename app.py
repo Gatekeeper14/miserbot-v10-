@@ -4,7 +4,7 @@ import os
 
 app = Flask(__name__)
 
-# ENV VARIABLES (set these in Railway)
+# ENV VARIABLES
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
@@ -24,12 +24,25 @@ def send_telegram(message):
     except Exception as e:
         print("Telegram error:", e)
 
-# ROOT ROUTE (health check)
+# HOME ROUTE
 @app.route("/", methods=["GET"])
 def home():
     return "MiserBot Backend Running 🚀"
 
-# LEAD CAPTURE ROUTE
+# TEST ROUTE (SUPER IMPORTANT)
+@app.route("/test", methods=["GET"])
+def test():
+    message = """
+🔥 TEST LEAD 🔥
+
+Name: Test User
+Email: test@test.com
+Phone: 1234567890
+"""
+    send_telegram(message)
+    return "Test sent to Telegram ✅"
+
+# MAIN LEAD ROUTE
 @app.route("/lead", methods=["POST"])
 def capture_lead():
     data = request.json
