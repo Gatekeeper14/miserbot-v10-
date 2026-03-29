@@ -83,6 +83,11 @@ user_data = {}
 def webhook():
     data = request.json
     message = data.get("message", {})
+
+    # 🚨 STOP LOOP (IGNORE BOT MESSAGES)
+    if message.get("from", {}).get("is_bot"):
+        return "ok"
+
     chat_id = message.get("chat", {}).get("id")
     text = message.get("text", "").strip()
 
@@ -92,17 +97,27 @@ def webhook():
     user = user_data.get(chat_id, {"step": 0})
 
     if user["step"] == 0:
-        reply = "👋 Welcome! What's your name?"
+        reply = (
+            "👋 Welcome to GetMiserBot.com\n\n"
+            "We specialize in automated business solutions and client acquisition systems.\n\n"
+            "To better assist you, may I have your full name?"
+        )
         user["step"] = 1
 
     elif user["step"] == 1:
         user["name"] = text
-        reply = "Great 👍 What's your email?"
+        reply = (
+            f"Thank you, {user['name']}.\n\n"
+            "Could you please provide your best email address so our team can follow up?"
+        )
         user["step"] = 2
 
     elif user["step"] == 2:
         user["email"] = text
-        reply = "Perfect 📞 What's your phone number?"
+        reply = (
+            "Great, thank you.\n\n"
+            "Lastly, may we have a contact number for direct assistance?"
+        )
         user["step"] = 3
 
     elif user["step"] == 3:
@@ -119,7 +134,12 @@ Phone: {user['phone']}
         send_telegram(message_text)
         send_email("New Lead", message_text)
 
-        reply = "✅ Thank you! We'll contact you shortly."
+        reply = (
+            "✅ Thank you for your information.\n\n"
+            "A representative from GetMiserBot will be contacting you shortly.\n\n"
+            "We appreciate your interest."
+        )
+
         user = {"step": 0}
 
     user_data[chat_id] = user
