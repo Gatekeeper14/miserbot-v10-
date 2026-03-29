@@ -1,62 +1,74 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
 import os
-import smtplib
-from email.mime.text import MIMEText
+import requests
 from threading import Thread
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# ENV
+# ENV VARIABLES
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
 
-# TEMP MEMORY (per session)
+# SIMPLE MEMORY
 user_data = {}
 
-# EMAIL
+# SENDGRID EMAIL (WITH TIMEOUT - NO HANG)
 def send_email(subject, html):
     try:
-        msg = MIMEText(html, "html")
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_USER
-        msg["To"] = EMAIL_USER
+        response = requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers={
+                "Authorization": f"Bearer {SENDGRID_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "personalizations": [
+                    {
+                        "to": [{"email": EMAIL_USER}],
+                        "subject": subject
+                    }
+                ],
+                "from": {"email": EMAIL_USER},
+                "content": [
+                    {
+                        "type": "text/html",
+                        "value": html
+                    }
+                ]
+            },
+            timeout=10
+        )
 
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASS)
-        server.send_message(msg)
-        server.quit()
-
-        print("✅ Email sent")
+        print("✅ SendGrid status:", response.status_code)
 
     except Exception as e:
-        print("❌ EMAIL ERROR:", str(e))
+        print("⚠️ Email failed:", str(e))
 
 # HOME
 @app.route("/", methods=["GET"])
 def home():
     return "MiserBot System Running 🚀"
 
-# CHAT + RECEPTIONIST SYSTEM
+# CHAT SYSTEM (RECEPTIONIST + LEAD CAPTURE)
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
     message = data.get("message", "").strip()
-    user_id = "web_user"  # simple session
+    user_id = "web_user"
 
     if user_id not in user_data:
         user_data[user_id] = {"step": 0}
 
     step = user_data[user_id]["step"]
 
-    # STEP FLOW
     if step == 0:
         user_data[user_id]["step"] = 1
-        return jsonify({"reply": "👋 Welcome to GetMiserBot.com\n\nWe specialize in automated business solutions.\n\nMay I have your full name?"})
+        return jsonify({
+            "reply": "👋 Welcome to GetMiserBot.com\n\nWe specialize in automated business solutions.\n\nMay I have your full name?"
+        })
 
     elif step == 1:
         user_data[user_id]["name"] = message
@@ -79,22 +91,21 @@ def chat():
 
         # SEND EMAIL ASYNC
         def send_async():
-            try:
-                html = f"""
-                <h2>🔥 New Chat Lead</h2>
-                <p><b>Name:</b> {name}</p>
-                <p><b>Email:</b> {email}</p>
-                <p><b>Phone:</b> {phone}</p>
-                """
-                send_email("New Chat Lead", html)
-            except Exception as e:
-                print("Email failed:", e)
+            html = f"""
+            <h2>🔥 New Chat Lead</h2>
+            <p><b>Name:</b> {name}</p>
+            <p><b>Email:</b> {email}</p>
+            <p><b>Phone:</b> {phone}</p>
+            """
+            send_email("New Chat Lead", html)
 
         Thread(target=send_async).start()
 
-        user_data[user_id]["step"] = 0  # reset
+        user_data[user_id]["step"] = 0
 
-        return jsonify({"reply": "✅ Thank you. Our team will contact you shortly."})
+        return jsonify({
+            "reply": "✅ Thank you. Our team will contact you shortly."
+        })
 
 # FORM LEAD (WEBSITE FORM)
 @app.route("/lead", methods=["POST"])
@@ -110,17 +121,14 @@ def lead():
         print("🔥 FORM LEAD:", name, email, phone, service)
 
         def send_async():
-            try:
-                html = f"""
-                <h2>🌐 Website Lead</h2>
-                <p><b>Name:</b> {name}</p>
-                <p><b>Email:</b> {email}</p>
-                <p><b>Phone:</b> {phone}</p>
-                <p><b>Service:</b> {service}</p>
-                """
-                send_email("New Website Lead", html)
-            except Exception as e:
-                print("Email failed:", e)
+            html = f"""
+            <h2>🌐 Website Lead</h2>
+            <p><b>Name:</b> {name}</p>
+            <p><b>Email:</b> {email}</p>
+            <p><b>Phone:</b> {phone}</p>
+            <p><b>Service:</b> {service}</p>
+            """
+            send_email("New Website Lead", html)
 
         Thread(target=send_async).start()
 
