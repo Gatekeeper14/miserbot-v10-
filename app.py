@@ -6,20 +6,23 @@ app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-EMAIL_TO = os.getenv("EMAIL_USER")  # your email
+EMAIL_TO = os.getenv("EMAIL_USER")
 
 user_data = {}
 processed = set()
 
-# ---------------- TELEGRAM ----------------
 def send_message(chat_id, text):
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={"chat_id": chat_id, "text": text}
-    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text}
+        )
+    except Exception as e:
+        print("TELEGRAM ERROR:", e)
 
-# ---------------- EMAIL VIA RESEND ----------------
 def send_email(subject, body):
+    print("📧 TRYING EMAIL...")
+
     try:
         response = requests.post(
             "https://api.resend.com/emails",
@@ -35,12 +38,11 @@ def send_email(subject, body):
             }
         )
 
-        print("EMAIL STATUS:", response.text)
+        print("📧 RESPONSE:", response.status_code, response.text)
 
     except Exception as e:
         print("EMAIL ERROR:", e)
 
-# ---------------- WEBHOOK ----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
@@ -65,19 +67,21 @@ def webhook():
 
     user = user_data.get(chat_id, {"step": 0})
 
+    print("USER STEP:", user["step"], "TEXT:", text)
+
     try:
         if user["step"] == 0:
-            reply = "👋 Welcome to GetMiserBot.com\n\nMay I have your full name?"
+            reply = "👋 Welcome to GetMiserBot.com\n\nWhat is your full name?"
             user["step"] = 1
 
         elif user["step"] == 1:
             user["name"] = text
-            reply = "Please provide your email address."
+            reply = "Enter your email:"
             user["step"] = 2
 
         elif user["step"] == 2:
             user["email"] = text
-            reply = "Lastly, your phone number?"
+            reply = "Enter your phone:"
             user["step"] = 3
 
         elif user["step"] == 3:
@@ -91,9 +95,11 @@ Email: {user['email']}
 Phone: {user['phone']}
 """
 
+            print("🔥 LEAD READY:", lead)
+
             send_email("New Lead", lead)
 
-            reply = "✅ Thank you. We will contact you shortly."
+            reply = "✅ Done. We will contact you."
 
             user = {"step": 0}
 
@@ -103,15 +109,13 @@ Phone: {user['phone']}
 
     except Exception as e:
         print("CRASH:", e)
-        send_message(chat_id, "⚠️ System error. Please try again.")
+        send_message(chat_id, "⚠️ Error occurred")
 
     return "ok"
 
-# ---------------- HOME ----------------
 @app.route("/")
 def home():
-    return "MiserBot FINAL EMAIL SYSTEM 🚀"
+    return "FINAL DEBUG MODE"
 
-# ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000)
