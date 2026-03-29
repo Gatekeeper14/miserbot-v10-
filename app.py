@@ -9,26 +9,34 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 EMAIL_TO = os.getenv("EMAIL_USER")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+WEBSITE_URL = os.getenv("WEBSITE_URL")
 
 user_data = {}
 processed = set()
 
-print("🔥 MISERBOT X LOADED — STABLE + AI + MULTI SERVICE")
+print("🔥 MISERBOT X — WEBSITE READY")
 
 # ---------------- TELEGRAM ----------------
-def send_message(chat_id, text):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": text}
-        )
-    except Exception as e:
-        print("TELEGRAM ERROR:", e)
+def send_message(chat_id, text, buttons=None):
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
+
+    if buttons:
+        payload["reply_markup"] = {
+            "inline_keyboard": buttons
+        }
+
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        json=payload
+    )
 
 # ---------------- EMAIL ----------------
 def send_email(subject, body):
     try:
-        response = requests.post(
+        requests.post(
             "https://api.resend.com/emails",
             headers={
                 "Authorization": f"Bearer {RESEND_API_KEY}",
@@ -38,15 +46,15 @@ def send_email(subject, body):
                 "from": "MiserBot <onboarding@resend.dev>",
                 "to": [EMAIL_TO],
                 "subject": subject,
-                "text": body
+                "html": body
             }
         )
-        print("📧 EMAIL:", response.status_code)
+        print("📧 EMAIL SENT")
     except Exception as e:
         print("EMAIL ERROR:", e)
 
-# ---------------- AI (CONTROLLED) ----------------
-def ai_reply(user_message, service):
+# ---------------- AI ----------------
+def ai_reply(service):
     try:
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
@@ -58,20 +66,45 @@ def ai_reply(user_message, service):
                 "messages": [
                     {
                         "role": "system",
-                        "content": f"You are a professional assistant for GetMiserBot specializing in {service}. Keep responses short, clear, and business-focused."
-                    },
-                    {"role": "user", "content": user_message}
+                        "content": f"You are a professional assistant for {service}. Keep it short and persuasive."
+                    }
                 ]
             }
         )
         return response.json()["choices"][0]["message"]["content"]
     except:
-        return "Thank you. Let’s get a few details so we can assist you."
+        return "Let’s get a few details so we can assist you."
 
 # ---------------- WEBHOOK ----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
+
+    # BUTTON CLICK HANDLER
+    if "callback_query" in data:
+        query = data["callback_query"]
+        chat_id = query["message"]["chat"]["id"]
+        choice = query["data"]
+
+        user = user_data.get(chat_id, {"step": 1})
+
+        services = {
+            "automation": "Business Automation",
+            "astro": "Astrocartography",
+            "realestate": "Real Estate"
+        }
+
+        user["service"] = services.get(choice, "General")
+
+        reply = ai_reply(user["service"]) + "\n\nWhat is your full name?"
+        user["step"] = 2
+
+        user_data[chat_id] = user
+
+        send_message(chat_id, reply)
+
+        return "ok"
+
     message = data.get("message")
 
     if not message:
@@ -100,81 +133,67 @@ def webhook():
     user = user_data.get(chat_id, {"step": 0})
 
     try:
-        # STEP 0 - MENU
+        # STEP 0 - SHOW BUTTON MENU
         if user["step"] == 0:
-            reply = (
-                "👋 Welcome to GetMiserBot.com\n\n"
-                "How can we assist you today?\n\n"
-                "1️⃣ Business Automation\n"
-                "2️⃣ Astrocartography\n"
-                "3️⃣ Real Estate"
+            buttons = [
+                [{"text": "🤖 Business Automation", "callback_data": "automation"}],
+                [{"text": "🌍 Astrocartography", "callback_data": "astro"}],
+                [{"text": "🏠 Real Estate", "callback_data": "realestate"}]
+            ]
+
+            send_message(
+                chat_id,
+                "👋 Welcome to GetMiserBot.com\n\nSelect a service below:",
+                buttons
             )
+
             user["step"] = 1
-
-        # STEP 1 - SERVICE SELECTION
-        elif user["step"] == 1:
-            if text == "1":
-                user["service"] = "Business Automation"
-            elif text == "2":
-                user["service"] = "Astrocartography"
-            elif text == "3":
-                user["service"] = "Real Estate"
-            else:
-                send_message(chat_id, "Please select 1, 2, or 3.")
-                return "ok"
-
-            reply = ai_reply("User selected service", user["service"])
-            reply += "\n\nWhat is your full name?"
-            user["step"] = 2
 
         # STEP 2 - NAME
         elif user["step"] == 2:
             user["name"] = text
-            reply = "Enter your email:"
+            send_message(chat_id, "Enter your email:")
             user["step"] = 3
 
         # STEP 3 - EMAIL
         elif user["step"] == 3:
             user["email"] = text
-            reply = "Enter your phone:"
+            send_message(chat_id, "Enter your phone:")
             user["step"] = 4
 
         # STEP 4 - FINAL
         elif user["step"] == 4:
             user["phone"] = text
 
-            lead = f"""
-🔥 NEW LEAD 🔥
+            lead_html = f"""
+<h2>🔥 New Lead</h2>
+<p><b>Service:</b> {user['service']}</p>
+<p><b>Name:</b> {user['name']}</p>
+<p><b>Email:</b> {user['email']}</p>
+<p><b>Phone:</b> {user['phone']}</p>
 
-Service: {user['service']}
-Name: {user['name']}
-Email: {user['email']}
-Phone: {user['phone']}
+<br>
+<a href="{WEBSITE_URL}">🌐 Visit Your Website</a>
 """
 
-            print("🔥 LEAD:", lead)
+            send_email("New Lead", lead_html)
 
-            send_email("New Lead", lead)
-
-            reply = (
-                "✅ Thank you. A specialist will contact you shortly."
-            )
+            send_message(chat_id, "✅ Thank you. We will contact you shortly.")
 
             user = {"step": 0}
 
         user_data[chat_id] = user
-        send_message(chat_id, reply)
 
     except Exception as e:
         print("CRASH:", e)
-        send_message(chat_id, "⚠️ Error. Type 'reset' and try again.")
+        send_message(chat_id, "⚠️ Error. Type 'reset'.")
 
     return "ok"
 
 # ---------------- HOME ----------------
 @app.route("/")
 def home():
-    return "MiserBot X — LIVE ✅"
+    return "MiserBot Website Ready 🚀"
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
