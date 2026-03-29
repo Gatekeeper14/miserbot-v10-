@@ -7,27 +7,25 @@ from email.mime.text import MIMEText
 app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-ADMIN_CHAT_ID = os.getenv("CHAT_ID")
 
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 
 user_data = {}
-processed_messages = set()  # 🚨 prevents duplicates
+processed_messages = set()
 
-# ---------------- TELEGRAM ----------------
+# ---------------- TELEGRAM REPLY ONLY ----------------
 def send_message(chat_id, text):
     requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
         json={"chat_id": chat_id, "text": text}
     )
 
-def send_admin(text):
-    send_message(ADMIN_CHAT_ID, text)
-
-# ---------------- EMAIL ----------------
+# ---------------- EMAIL (ONLY LEAD OUTPUT) ----------------
 def send_email(subject, body):
     try:
+        print("📧 Sending email...")
+
         msg = MIMEText(body)
         msg["Subject"] = subject
         msg["From"] = EMAIL_USER
@@ -47,21 +45,20 @@ def send_email(subject, body):
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-
     message = data.get("message")
+
     if not message:
         return "ok"
 
-    # 🚨 ignore bot messages
+    # 🚨 Ignore bot messages
     if message.get("from", {}).get("is_bot"):
         return "ok"
 
     message_id = message.get("message_id")
 
-    # 🚨 STOP DUPLICATE PROCESSING
+    # 🚨 Prevent duplicates
     if message_id in processed_messages:
         return "ok"
-
     processed_messages.add(message_id)
 
     chat_id = message.get("chat", {}).get("id")
@@ -70,11 +67,7 @@ def webhook():
     if not text:
         return "ok"
 
-    user = user_data.get(chat_id, {"step": 0, "completed": False})
-
-    # 🚨 HARD STOP if already completed
-    if user.get("completed"):
-        return "ok"
+    user = user_data.get(chat_id, {"step": 0})
 
     # FLOW
     if user["step"] == 0:
@@ -87,12 +80,12 @@ def webhook():
 
     elif user["step"] == 1:
         user["name"] = text
-        reply = "Thank you. Please provide your email address."
+        reply = "Please provide your email address."
         user["step"] = 2
 
     elif user["step"] == 2:
         user["email"] = text
-        reply = "Great. Lastly, your phone number?"
+        reply = "Lastly, your phone number?"
         user["step"] = 3
 
     elif user["step"] == 3:
@@ -106,13 +99,13 @@ Email: {user['email']}
 Phone: {user['phone']}
 """
 
-        # 🚨 SEND ONLY ONCE
-        send_admin(lead)
+        # 🚨 ONLY EMAIL — NO TELEGRAM
         send_email("New Lead", lead)
 
         reply = "✅ Thank you. Our team will contact you shortly."
 
-        user["completed"] = True  # 🚨 prevents resend
+        # reset clean
+        user = {"step": 0}
 
     user_data[chat_id] = user
 
@@ -123,7 +116,7 @@ Phone: {user['phone']}
 # ---------------- HOME ----------------
 @app.route("/")
 def home():
-    return "MiserBot FINAL Stable Running ✅"
+    return "MiserBot EMAIL-ONLY MODE ✅"
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
