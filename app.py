@@ -1,12 +1,24 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os
+import os, json
+from datetime import datetime
 from openai import OpenAI
 
 app = Flask(__name__)
 CORS(app)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# =========================
+# CONFIG
+# =========================
+LEADS_FILE = "leads.json"
+
+# Twilio (PRE-WIRED OFF)
+TWILIO_ENABLED = False
+TWILIO_SID = os.getenv("TWILIO_SID")
+TWILIO_TOKEN = os.getenv("TWILIO_TOKEN")
+TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
 
 # =========================
 # MEMORY
@@ -17,18 +29,54 @@ def get_session(user_id):
     if user_id not in sessions:
         sessions[user_id] = {
             "messages": [],
-            "lead": {
-                "name": None,
-                "email": None,
-                "phone": None
-            }
+            "lead": {"name": None, "email": None, "phone": None},
+            "mode": "business"
         }
     return sessions[user_id]
 
 # =========================
+# SAVE LEAD
+# =========================
+def save_lead(lead, mode):
+    data = []
+
+    if os.path.exists(LEADS_FILE):
+        with open(LEADS_FILE, "r") as f:
+            try:
+                data = json.load(f)
+            except:
+                data = []
+
+    lead_entry = {
+        "name": lead["name"],
+        "email": lead["email"],
+        "phone": lead["phone"],
+        "mode": mode,
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    data.append(lead_entry)
+
+    with open(LEADS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+    print("🔥 SAVED LEAD:", lead_entry)
+
+    # 🚧 FUTURE: Twilio hook (disabled)
+    if TWILIO_ENABLED:
+        send_sms_notification(lead_entry)
+
+# =========================
+# TWILIO PLACEHOLDER
+# =========================
+def send_sms_notification(lead):
+    print("📲 Twilio ready (currently disabled)")
+    # When ready, enable and implement
+
+# =========================
 @app.route("/")
 def home():
-    return "👑 MiserBot Auto Closer Active"
+    return "👑 MiserBot Empire (Production Mode)"
 
 # =========================
 @app.route("/chat", methods=["POST"])
@@ -39,16 +87,18 @@ def chat():
     user_id = request.remote_addr
 
     session = get_session(user_id)
+    session["mode"] = mode
 
-    # 🧠 Extract lead info automatically
-    extract_lead_info(session, message)
+    extract_lead(session, message)
 
-    # If lead is complete → save it
+    # If lead complete → save
     if all(session["lead"].values()):
-        print("🔥 AUTO LEAD CAPTURED:", session["lead"])
+        save_lead(session["lead"], mode)
+
         session["lead"] = {"name": None, "email": None, "phone": None}
+
         return jsonify({
-            "reply": "🔥 You're all set. Our team will contact you shortly."
+            "reply": "🔥 You're all set. We’ll contact you shortly."
         })
 
     system_prompt = build_prompt(mode, session["lead"])
@@ -71,63 +121,50 @@ def chat():
         return jsonify({"reply": reply})
 
     except Exception as e:
-        print("❌ ERROR:", e)
+        print("❌ GPT ERROR:", e)
         return jsonify({"reply": "⚠️ AI temporarily unavailable."})
-
 
 # =========================
 # LEAD EXTRACTION
 # =========================
-def extract_lead_info(session, message):
+def extract_lead(session, message):
 
     if "@" in message and not session["lead"]["email"]:
         session["lead"]["email"] = message.strip()
 
-    elif any(char.isdigit() for char in message) and len(message) >= 7 and not session["lead"]["phone"]:
+    elif any(c.isdigit() for c in message) and len(message) >= 7 and not session["lead"]["phone"]:
         session["lead"]["phone"] = message.strip()
 
     elif not session["lead"]["name"] and len(message.split()) <= 3:
         session["lead"]["name"] = message.strip()
 
-
 # =========================
-# SMART PROMPTS
+# PROMPTS
 # =========================
 def build_prompt(mode, lead):
 
     missing = [k for k, v in lead.items() if not v]
 
-    capture_instruction = ""
+    capture = ""
     if missing:
-        capture_instruction = f"""
-Your goal is to naturally collect this missing info: {missing}
-
+        capture = f"""
+Your goal is to collect this info naturally: {missing}
 Ask casually, one at a time.
-Do NOT ask everything at once.
 """
 
     if mode == "realestate":
-        base = """
-You are a high-end real estate AI.
-Help find properties and guide user to becoming a lead.
-"""
+        base = "You are a luxury real estate AI helping users find homes and become leads."
     elif mode == "astrology":
-        base = """
-You are an astrology AI giving readings and engaging users.
-"""
+        base = "You are an astrology AI giving engaging and insightful readings."
     else:
-        base = """
-You are a sales AI helping businesses automate and grow.
-"""
+        base = "You are a high-end AI sales assistant helping businesses automate and grow."
 
-    return base + capture_instruction
-
+    return base + capture
 
 # =========================
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
-
 
 # =========================
 if __name__ == "__main__":
