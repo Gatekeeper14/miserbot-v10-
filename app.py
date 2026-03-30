@@ -9,19 +9,26 @@ CORS(app)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # =========================
-# MEMORY STORE
+# MEMORY
 # =========================
 sessions = {}
 
 def get_session(user_id):
     if user_id not in sessions:
-        sessions[user_id] = {"messages": []}
+        sessions[user_id] = {
+            "messages": [],
+            "lead": {
+                "name": None,
+                "email": None,
+                "phone": None
+            }
+        }
     return sessions[user_id]
 
 # =========================
 @app.route("/")
 def home():
-    return "👑 MiserBot AI Brain Active"
+    return "👑 MiserBot Auto Closer Active"
 
 # =========================
 @app.route("/chat", methods=["POST"])
@@ -33,9 +40,19 @@ def chat():
 
     session = get_session(user_id)
 
-    system_prompt = build_system_prompt(mode)
+    # 🧠 Extract lead info automatically
+    extract_lead_info(session, message)
 
-    # Build conversation history
+    # If lead is complete → save it
+    if all(session["lead"].values()):
+        print("🔥 AUTO LEAD CAPTURED:", session["lead"])
+        session["lead"] = {"name": None, "email": None, "phone": None}
+        return jsonify({
+            "reply": "🔥 You're all set. Our team will contact you shortly."
+        })
+
+    system_prompt = build_prompt(mode, session["lead"])
+
     messages = [{"role": "system", "content": system_prompt}] + session["messages"]
     messages.append({"role": "user", "content": message})
 
@@ -48,79 +65,62 @@ def chat():
 
         reply = response.choices[0].message.content
 
-        # Save memory
         session["messages"].append({"role": "user", "content": message})
         session["messages"].append({"role": "assistant", "content": reply})
 
         return jsonify({"reply": reply})
 
     except Exception as e:
-        print("❌ GPT ERROR:", e)
-        return jsonify({"reply": "⚠️ AI is temporarily unavailable."})
+        print("❌ ERROR:", e)
+        return jsonify({"reply": "⚠️ AI temporarily unavailable."})
 
 
 # =========================
-# SYSTEM PROMPTS (THE REAL MAGIC)
+# LEAD EXTRACTION
 # =========================
-def build_system_prompt(mode):
+def extract_lead_info(session, message):
+
+    if "@" in message and not session["lead"]["email"]:
+        session["lead"]["email"] = message.strip()
+
+    elif any(char.isdigit() for char in message) and len(message) >= 7 and not session["lead"]["phone"]:
+        session["lead"]["phone"] = message.strip()
+
+    elif not session["lead"]["name"] and len(message.split()) <= 3:
+        session["lead"]["name"] = message.strip()
+
+
+# =========================
+# SMART PROMPTS
+# =========================
+def build_prompt(mode, lead):
+
+    missing = [k for k, v in lead.items() if not v]
+
+    capture_instruction = ""
+    if missing:
+        capture_instruction = f"""
+Your goal is to naturally collect this missing info: {missing}
+
+Ask casually, one at a time.
+Do NOT ask everything at once.
+"""
 
     if mode == "realestate":
-        return """
-You are a high-end real estate AI assistant.
-
-Your job:
-- Help users find properties
-- Ask for location, budget, rent/buy
-- Sound professional and confident
-- Guide them toward becoming a lead
-
-Always:
-- Be concise
-- Ask questions
-- Move toward closing the user
+        base = """
+You are a high-end real estate AI.
+Help find properties and guide user to becoming a lead.
 """
-
     elif mode == "astrology":
-        return """
-You are a mystical but accurate astrology AI.
-
-Your job:
-- Provide engaging readings
-- Talk about love, money, and future
-- Ask for birth details when needed
-- Sound confident and insightful
-
-Keep responses intriguing but clear.
+        base = """
+You are an astrology AI giving readings and engaging users.
 """
-
     else:
-        return """
-You are MiserBot — an elite AI sales assistant.
-
-Your job:
-- Talk to business owners
-- Understand their problems
-- Offer automation solutions
-- Move them toward becoming a lead
-
-You should:
-- Ask questions step-by-step
-- Be persuasive but not pushy
-- Sound premium and intelligent
-- Lead them to submit their contact info
+        base = """
+You are a sales AI helping businesses automate and grow.
 """
 
-
-# =========================
-# LEAD CAPTURE
-# =========================
-@app.route("/lead", methods=["POST"])
-def lead():
-    data = request.json
-
-    print("🔥 LEAD:", data)
-
-    return jsonify({"status": "ok"})
+    return base + capture_instruction
 
 
 # =========================
