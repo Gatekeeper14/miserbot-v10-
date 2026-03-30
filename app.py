@@ -7,18 +7,23 @@ from openai import OpenAI
 app = Flask(__name__)
 CORS(app)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# =========================
+# OPENAI SAFE INIT
+# =========================
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+
+if OPENAI_KEY:
+    client = OpenAI(api_key=OPENAI_KEY)
+else:
+    client = None
+    print("❌ OPENAI_API_KEY MISSING")
 
 # =========================
 # CONFIG
 # =========================
 LEADS_FILE = "leads.json"
 
-# Twilio (PRE-WIRED OFF)
-TWILIO_ENABLED = False
-TWILIO_SID = os.getenv("TWILIO_SID")
-TWILIO_TOKEN = os.getenv("TWILIO_TOKEN")
-TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
+TWILIO_ENABLED = False  # keep OFF
 
 # =========================
 # MEMORY
@@ -62,21 +67,10 @@ def save_lead(lead, mode):
 
     print("🔥 SAVED LEAD:", lead_entry)
 
-    # 🚧 FUTURE: Twilio hook (disabled)
-    if TWILIO_ENABLED:
-        send_sms_notification(lead_entry)
-
-# =========================
-# TWILIO PLACEHOLDER
-# =========================
-def send_sms_notification(lead):
-    print("📲 Twilio ready (currently disabled)")
-    # When ready, enable and implement
-
 # =========================
 @app.route("/")
 def home():
-    return "👑 MiserBot Empire (Production Mode)"
+    return "👑 MiserBot Running"
 
 # =========================
 @app.route("/chat", methods=["POST"])
@@ -86,12 +80,13 @@ def chat():
     mode = data.get("mode", "business")
     user_id = request.remote_addr
 
+    print("📩 Incoming:", message)
+
     session = get_session(user_id)
     session["mode"] = mode
 
     extract_lead(session, message)
 
-    # If lead complete → save
     if all(session["lead"].values()):
         save_lead(session["lead"], mode)
 
@@ -107,6 +102,9 @@ def chat():
     messages.append({"role": "user", "content": message})
 
     try:
+        if not client:
+            raise Exception("No OpenAI client")
+
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
@@ -115,17 +113,18 @@ def chat():
 
         reply = response.choices[0].message.content
 
-        session["messages"].append({"role": "user", "content": message})
-        session["messages"].append({"role": "assistant", "content": reply})
-
-        return jsonify({"reply": reply})
+        print("🤖 GPT:", reply)
 
     except Exception as e:
-        print("❌ GPT ERROR:", e)
-        return jsonify({"reply": "⚠️ AI temporarily unavailable."})
+        print("❌ GPT ERROR:", str(e))
 
-# =========================
-# LEAD EXTRACTION
+        reply = "I’m here — tell me about your business and I’ll guide you step by step."
+
+    session["messages"].append({"role": "user", "content": message})
+    session["messages"].append({"role": "assistant", "content": reply})
+
+    return jsonify({"reply": reply})
+
 # =========================
 def extract_lead(session, message):
 
@@ -138,8 +137,6 @@ def extract_lead(session, message):
     elif not session["lead"]["name"] and len(message.split()) <= 3:
         session["lead"]["name"] = message.strip()
 
-# =========================
-# PROMPTS
 # =========================
 def build_prompt(mode, lead):
 
