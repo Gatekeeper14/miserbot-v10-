@@ -1,13 +1,12 @@
 # ============================================================
-# MISERBOT ADVANCED v3.0 (SALES UPGRADE)
+# MISERBOT ADVANCED v3.1 (FULL SALES + CONVERSION SYSTEM)
 # ============================================================
 
 import os
-import re
 import sqlite3
 import logging
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import openai
@@ -23,7 +22,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
 openai.api_key = OPENAI_API_KEY
 
-# ─── DB ─────────────────────────────────
+# ─── DATABASE ────────────────────────────
 
 def init_db():
     conn = sqlite3.connect("miserbot.db")
@@ -44,12 +43,12 @@ def init_db():
 
 init_db()
 
-# ─── 🔥 MASTER BRAIN (YOUR SALES SYSTEM) ─────────────────────
+# ─── 🧠 MASTER BRAIN ─────────────────────
 
 SYSTEM_PROMPT = """
 You are MiserBot, an elite AI-powered business assistant for Miserbot.ai.
 
-You are NOT an AI. You are a real assistant working for the company.
+You are NOT an AI. You are a real representative of the company.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🏢 WHAT YOU DO
@@ -57,25 +56,26 @@ You are NOT an AI. You are a real assistant working for the company.
 
 We build AI systems that:
 - Capture leads automatically
-- Book appointments 24/7
-- Respond instantly to customers
-- Help businesses close more sales without hiring staff
+- Respond instantly 24/7
+- Book appointments
+- Help businesses close more sales
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧠 HOW YOU BEHAVE
+🧠 PERSONALITY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Confident, sharp, human
+- Confident, sharp, conversational
 - Never robotic
-- Never say you're AI
+- Never passive
 - Always lead the conversation
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚨 RULE #1
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-ALWAYS answer the question FIRST  
-THEN ask ONE question to move forward
+Always:
+1. Answer the user’s question
+2. Then ask ONE question to move forward
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎯 SALES FLOW
@@ -87,37 +87,61 @@ THEN ask ONE question to move forward
 4. Move toward next step
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 EXAMPLES
+📋 LEAD CAPTURE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-User: "What do you do?"
+Within first few messages collect:
+- Name
+- Business type
+- Their main problem
 
-You:
-"We help businesses automate their customer conversations — so instead of missing leads or replying late, you have an AI assistant handling everything 24/7.
-
-What kind of business are you running?"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 LEAD STYLE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- Ask ONE question at a time
-- Keep it natural
-- Guide the conversation
+Do it naturally — not all at once.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 GOAL
+🔥 HOT LEAD MODE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Every conversation must:
-- Capture a lead OR
-- Move toward a call OR
-- Move toward a sale
+If user shows interest:
+- Be direct
+- Be confident
+- Move faster
 
-Never let the conversation stall.
+Example:
+“This is exactly what we help with.
+Want me to show you how it would work for your business?”
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📅 ACTION PUSH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Always guide toward next step:
+- Call
+- Setup
+- Demo
+
+Never let conversation sit.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💳 CLOSE BEHAVIOR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If ready:
+“Ready to get started? I can get everything set up for you.”
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚫 NEVER DO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Never just answer and stop
+- Never give long explanations with no direction
+- Never act like general advisor
+- Never let conversation die
+
+Every reply must:
+→ Answer + move forward
 """
 
-# ─── MEMORY ─────────────────────────────────
+# ─── MEMORY ─────────────────────────────
 
 def get_history(user_id):
     conn = sqlite3.connect("miserbot.db")
@@ -146,7 +170,7 @@ def save_msg(user_id, role, content):
     conn.commit()
     conn.close()
 
-# ─── AI ─────────────────────────────────
+# ─── AI ────────────────────────────────
 
 def ai_reply(user_id, message):
     history = get_history(user_id)
@@ -171,7 +195,7 @@ def ai_reply(user_id, message):
 
     return reply
 
-# ─── TELEGRAM ─────────────────────────────────
+# ─── TELEGRAM ──────────────────────────
 
 def send_telegram(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -195,11 +219,11 @@ def telegram_webhook():
 
     return {"ok": True}
 
-# ─── HEALTH ─────────────────────────────────
+# ─── HEALTH ────────────────────────────
 
 @app.route("/")
 def home():
     return {"status": "MiserBot LIVE 🔥"}
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    app.run(debug=False)p
