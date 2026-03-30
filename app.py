@@ -1,204 +1,175 @@
-from flask import Flask, request
-import requests
-import os
+# ============================================================
+# MISERBOT ADVANCED v3.0 (FIXED + DEPLOYABLE)
+# ============================================================
 
-from openai import OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+import os
+import re
+import sqlite3
+import logging
+import requests
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+import openai
+from twilio.rest import Client as TwilioClient
+from twilio.twiml.messaging_response import MessagingResponse
+import stripe
+from apscheduler.schedulers.background import BackgroundScheduler
+
+# ─── APP INIT ────────────────────────────────────────────────
 
 app = Flask(__name__)
+CORS(app)
+logging.basicConfig(level=logging.INFO)
 
-# ===== CONFIG =====
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# ─── ENV ─────────────────────────────────────────────────────
 
-# ===== MISERBOT MASTER BRAIN v2.0 =====
-MISERBOT_PROMPT = """MISERBOT SYSTEM PROMPT — MASTER BRAIN v2.0
+OPENAI_API_KEY      = os.environ.get("OPENAI_API_KEY")
+TELEGRAM_BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN")
+TWILIO_ACCOUNT_SID  = os.environ.get("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN   = os.environ.get("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.environ.get("TWILIO_PHONE_NUMBER")
+STRIPE_SECRET_KEY   = os.environ.get("STRIPE_SECRET_KEY")
+STRIPE_PAYMENT_LINK = os.environ.get("STRIPE_PAYMENT_LINK")
 
-You are MiserBot, an elite AI-powered business assistant built by Miserbot.ai. 
-You are deployed on behalf of businesses to handle their customer conversations 
-24/7 across Telegram, SMS, website chat, and voice. You are sharp, warm, 
-professional, and results-driven. You represent the business at the highest level.
+openai.api_key = OPENAI_API_KEY
+stripe.api_key = STRIPE_SECRET_KEY
+twilio_client  = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🏢 WHO YOU ARE & WHAT YOU DO
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ─── DATABASE ────────────────────────────────────────────────
 
-Business: Miserbot.ai
-What We Do: We build and deploy AI-powered automation systems that help 
-businesses capture leads, book appointments, answer customer questions, 
-and close sales — automatically, 24/7, without hiring extra staff.
+def init_db():
+    conn = sqlite3.connect("miserbot.db")
+    c = conn.cursor()
 
-Services We Offer:
-  • AI Chatbot Setup — Custom-built smart bots for Telegram, SMS, website, and voice
-  • Lead Capture & Qualification
-  • Appointment Booking Automation
-  • Multi-Channel Deployment
-  • Sales Automation
-  • White-Label Solutions
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT UNIQUE,
+            channel TEXT,
+            name TEXT,
+            phone TEXT,
+            email TEXT,
+            business_type TEXT,
+            need TEXT,
+            budget TEXT,
+            timeline TEXT,
+            lead_score TEXT DEFAULT 'COLD',
+            appointment_time TEXT,
+            paid INTEGER DEFAULT 0,
+            created_at TEXT,
+            last_seen TEXT
+        )
+    """)
 
-Who We Help:
-  Any business that talks to customers.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            role TEXT,
+            content TEXT,
+            timestamp TEXT
+        )
+    """)
 
-Why Businesses Choose Miserbot.ai:
-  ✅ Never miss a lead again
-  ✅ Save time
-  ✅ Book more appointments
-  ✅ Scale without hiring
+    conn.commit()
+    conn.close()
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧠 YOUR PERSONALITY & TONE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+init_db()
 
-- Confident, concise, helpful
-- Never say you're an AI
-- Always control the conversation
-- Always move forward
+# ─── SYSTEM PROMPT (YOUR BRAIN) ──────────────────────────────
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 MISSION PRIORITY ORDER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. GREET  
-2. ANSWER  
-3. QUALIFY  
-4. CAPTURE  
-5. BOOK OR CLOSE  
-6. FOLLOW UP  
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚨 CRITICAL RULE — ANSWER FIRST
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Always answer the user's question fully BEFORE asking anything.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 LEAD CAPTURE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Collect:
-- Name
-- Phone
-- Email
-- Need
-
-Ask naturally. One question at a time.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔍 QUALIFY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Learn:
-- Business type
-- Problem
-- Timeline
-- Budget
-- Decision maker
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📅 BOOKING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Offer 2 time slots only.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚫 RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- No generic advice
-- No long explanations
-- No multiple questions
-- Always end with next step
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ END GOAL
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Appointment OR lead captured OR next step.
+SYSTEM_PROMPT = """You are MiserBot, an elite AI assistant for Miserbot.ai.
+You capture leads, qualify, and close. Always answer first, then move forward.
+Keep responses short, confident, and always ask ONE question.
 """
 
-# ===== MEMORY =====
-sessions = {}
-leads = {}
+# ─── MEMORY ──────────────────────────────────────────────────
 
-def normalize_message(data):
-    message = data.get("message", {})
-    return {
-        "user_id": str(message.get("chat", {}).get("id")),
-        "text": message.get("text", "")
-    }
+def get_history(user_id):
+    conn = sqlite3.connect("miserbot.db")
+    c = conn.cursor()
+    c.execute("SELECT role, content FROM memory WHERE user_id=? ORDER BY id DESC LIMIT 10", (user_id,))
+    rows = c.fetchall()
+    conn.close()
+    return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
 
-def get_session(user_id):
-    return sessions.setdefault(user_id, [])
+def save_message(user_id, role, content):
+    conn = sqlite3.connect("miserbot.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO memory VALUES (NULL, ?, ?, ?, ?)",
+              (user_id, role, content, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
 
-def get_lead(user_id):
-    return leads.setdefault(user_id, {
-        "name": "",
-        "email": "",
-        "phone": "",
-        "need": ""
-    })
+# ─── AI CORE ─────────────────────────────────────────────────
 
-# ===== AI BRAIN =====
-def call_ai(session, text, lead):
-    messages = [
-        {"role": "system", "content": MISERBOT_PROMPT},
-        {"role": "system", "content": f"Current lead: {lead}"},
-        {"role": "system", "content": "Keep replies under 2 sentences. Ask only one question. Stay in control. Answer first if question is asked."}
-    ] + session + [
+def ai_reply(user_id, text):
+    history = get_history(user_id)
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [
         {"role": "user", "content": text}
     ]
 
-    response = client.chat.completions.create(
+    res = openai.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages,
-        temperature=0.3
+        temperature=0.4
     )
 
-    return response.choices[0].message.content
+    reply = res.choices[0].message.content
 
-# ===== TELEGRAM SEND =====
-def send_reply(user_id, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, json={
-        "chat_id": user_id,
-        "text": text
-    })
+    save_message(user_id, "user", text)
+    save_message(user_id, "assistant", reply)
 
-# ===== ROUTES =====
+    return reply
+
+# ─── TELEGRAM ────────────────────────────────────────────────
+
+def send_telegram(chat_id, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": chat_id, "text": text})
+
+@app.route("/webhook/telegram", methods=["POST"])
+def telegram():
+    data = request.json
+
+    if "message" not in data:
+        return jsonify({"ok": True})
+
+    chat_id = str(data["message"]["chat"]["id"])
+    text = data["message"].get("text", "")
+
+    if not text:
+        return jsonify({"ok": True})
+
+    reply = ai_reply(chat_id, text)
+    send_telegram(chat_id, reply)
+
+    return jsonify({"ok": True})
+
+# ─── SMS ─────────────────────────────────────────────────────
+
+@app.route("/webhook/sms", methods=["POST"])
+def sms():
+    from_number = request.form.get("From")
+    body = request.form.get("Body")
+
+    reply = ai_reply(from_number, body)
+
+    resp = MessagingResponse()
+    resp.message(reply)
+
+    return str(resp)
+
+# ─── HEALTH ──────────────────────────────────────────────────
+
 @app.route("/")
 def home():
-    return "OK", 200
+    return "MiserBot v3 Running", 200
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    try:
-        print("🔥 WEBHOOK HIT")
+# ─── RUN ─────────────────────────────────────────────────────
 
-        data = request.json
-        msg = normalize_message(data)
-
-        user_id = msg["user_id"]
-        text = msg["text"]
-
-        print("📩", text)
-
-        session = get_session(user_id)
-        lead = get_lead(user_id)
-
-        reply = call_ai(session, text, lead)
-
-        send_reply(user_id, reply)
-
-        session.append({"role": "user", "content": text})
-        session.append({"role": "assistant", "content": reply})
-        sessions[user_id] = session[-10:]
-
-        return "OK", 200
-
-    except Exception as e:
-        print("❌ ERROR:", e)
-        return "ERROR", 500
-
-# ===== RUN =====
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=8080)
