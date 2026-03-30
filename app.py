@@ -1,18 +1,19 @@
 from flask import Flask, request
-import json
 import requests
 import os
 
+from openai import OpenAI
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 app = Flask(__name__)
 
-# ===== CONFIG =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# ===== MEMORY =====
+MISERBOT_PROMPT = """PASTE YOUR FULL MISERBOT MASTER PROMPT HERE"""
+
 sessions = {}
 leads = {}
 
-# ===== HELPERS =====
 def normalize_message(data):
     message = data.get("message", {})
     return {
@@ -28,34 +29,31 @@ def get_lead(user_id):
         "name": "",
         "email": "",
         "phone": "",
-        "need": "",
-        "score": "cold"
+        "need": ""
     })
 
-def classify_intent(text):
-    text = text.lower()
-    if "@" in text:
-        return "email"
-    if "price" in text or "cost" in text:
-        return "pricing"
-    if "book" in text:
-        return "booking"
-    return "general"
+def call_ai(session, text, lead):
+    messages = [
+        {"role": "system", "content": MISERBOT_PROMPT},
+        {"role": "system", "content": f"Lead: {lead}"}
+    ] + session + [
+        {"role": "user", "content": text}
+    ]
 
-# ===== AI TEMP =====
-def call_ai(user_text):
-    return "Got it — what’s your email?"
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages
+    )
 
-# ===== TELEGRAM SEND =====
+    return response.choices[0].message.content
+
 def send_reply(user_id, text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
+    requests.post(url, json={
         "chat_id": user_id,
         "text": text
-    }
-    requests.post(url, json=payload)
+    })
 
-# ===== ROUTES =====
 @app.route("/")
 def home():
     return "OK", 200
@@ -71,11 +69,16 @@ def webhook():
         user_id = msg["user_id"]
         text = msg["text"]
 
-        print("📩", text)
+        session = get_session(user_id)
+        lead = get_lead(user_id)
 
-        reply = call_ai(text)
+        reply = call_ai(session, text, lead)
 
         send_reply(user_id, reply)
+
+        session.append({"role": "user", "content": text})
+        session.append({"role": "assistant", "content": reply})
+        sessions[user_id] = session[-10:]
 
         return "OK", 200
 
@@ -83,7 +86,6 @@ def webhook():
         print("❌ ERROR:", e)
         return "ERROR", 500
 
-# ===== RUN (CRITICAL FIX) =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
