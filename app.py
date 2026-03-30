@@ -1,163 +1,128 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-import requests
-from threading import Thread
+from datetime import datetime
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app)
 
-# ENV VARIABLES
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-EMAIL_USER = os.getenv("EMAIL_USER")
-
-# MEMORY (simple session)
-user_data = {}
-
-# SEND EMAIL (NON-BLOCKING SAFE)
-def send_email(subject, html):
-    try:
-        response = requests.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={
-                "Authorization": f"Bearer {SENDGRID_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "personalizations": [
-                    {
-                        "to": [{"email": EMAIL_USER}],
-                        "subject": subject
-                    }
-                ],
-                "from": {"email": EMAIL_USER},
-                "content": [
-                    {
-                        "type": "text/html",
-                        "value": html
-                    }
-                ]
-            },
-            timeout=10  # 🔥 prevents hanging
-        )
-
-        print("✅ SendGrid status:", response.status_code)
-
-    except Exception as e:
-        print("⚠️ Email failed:", str(e))
-
-# ROOT
-@app.route("/", methods=["GET"])
+# =========================
+# SYSTEM ROOT
+# =========================
+@app.route("/")
 def home():
-    return "MiserBot System Running 🚀"
+    return "👑 MiserBot Empire Running"
 
-# CHAT (ALWAYS ALIVE + LEAD CAPTURE)
+# =========================
+# CHAT ROUTE (MULTI MODE)
+# =========================
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
-    message = data.get("message", "").strip()
-    msg_lower = message.lower()
-    user_id = "web_user"
+    message = data.get("message", "").lower()
+    mode = data.get("mode", "business")
 
-    # INIT USER
-    if user_id not in user_data:
-        user_data[user_id] = {"step": 0}
+    print(f"🔥 MODE: {mode} | MESSAGE: {message}")
 
-    # 🔥 ALWAYS RESTART COMMAND
-    if msg_lower in ["hi", "hello", "start", "reset"]:
-        user_data[user_id] = {"step": 1}
-        return jsonify({
-            "reply": "👋 Welcome to GetMiserBot.com\n\nWe specialize in automated business solutions.\n\nMay I have your full name?"
-        })
+    if mode == "realestate":
+        reply = real_estate_ai(message)
 
-    step = user_data[user_id].get("step", 0)
+    elif mode == "astrology":
+        reply = astrology_ai(message)
 
-    try:
-        # STEP 1 → NAME
-        if step == 1:
-            user_data[user_id]["name"] = message
-            user_data[user_id]["step"] = 2
-            return jsonify({"reply": "Thank you. What is your best email address?"})
+    else:
+        reply = business_ai(message)
 
-        # STEP 2 → EMAIL
-        elif step == 2:
-            user_data[user_id]["email"] = message
-            user_data[user_id]["step"] = 3
-            return jsonify({"reply": "Perfect. Lastly, may I have your phone number?"})
+    return jsonify({"reply": reply})
 
-        # STEP 3 → PHONE + SEND EMAIL
-        elif step == 3:
-            user_data[user_id]["phone"] = message
 
-            name = user_data[user_id]["name"]
-            email = user_data[user_id]["email"]
-            phone = user_data[user_id]["phone"]
+# =========================
+# BUSINESS AI (SALES CLOSER)
+# =========================
+def business_ai(msg):
 
-            print("🔥 CHAT LEAD:", name, email, phone)
+    if "price" in msg or "cost" in msg:
+        return "💼 Our automation systems typically range from $99–$499/month depending on scale. What type of business are you running?"
 
-            # 🔥 SEND EMAIL IN BACKGROUND (SIMULTANEOUS)
-            def send_async():
-                html = f"""
-                <h2>🔥 New Chat Lead</h2>
-                <p><b>Name:</b> {name}</p>
-                <p><b>Email:</b> {email}</p>
-                <p><b>Phone:</b> {phone}</p>
-                """
-                send_email("New Chat Lead", html)
+    if "what do you do" in msg:
+        return "We build AI systems that capture leads, respond instantly, and close clients through chat, SMS, and automation."
 
-            Thread(target=send_async).start()
+    if "hi" in msg or "hello" in msg:
+        return "👋 Welcome to MiserBot. What kind of business do you own?"
 
-            # RESET FLOW
-            user_data[user_id] = {"step": 0}
+    return "Tell me about your business and I’ll show you how we can automate and increase your revenue."
 
-            return jsonify({
-                "reply": "✅ Thank you. Our team will contact you shortly.\n\nType 'hi' anytime to start again."
-            })
 
-        # FALLBACK (RECOVERY MODE)
-        else:
-            user_data[user_id] = {"step": 1}
-            return jsonify({
-                "reply": "👋 Welcome to GetMiserBot.com\n\nMay I have your full name?"
-            })
+# =========================
+# REAL ESTATE AI
+# =========================
+def real_estate_ai(msg):
 
-    except Exception as e:
-        print("❌ Chat error:", e)
-        user_data[user_id] = {"step": 0}
-        return jsonify({"reply": "⚠️ System reset. Please type 'hi' to start again."})
+    if "rent" in msg:
+        return "🏡 Looking to rent? Tell me your city and budget."
 
-# FORM LEAD (WEBSITE FORM)
+    if "buy" in msg:
+        return "🏡 Looking to buy? Share location + price range."
+
+    if any(city in msg for city in ["miami", "orlando", "tampa"]):
+        return "🔥 I found properties in your area. What’s your budget range?"
+
+    return "🏡 Tell me:\n• Location\n• Budget\n• Rent or Buy\n\nI’ll match you with properties."
+
+
+# =========================
+# ASTROLOGY AI
+# =========================
+def astrology_ai(msg):
+
+    if "love" in msg:
+        return "❤️ Your love energy shows strong emotional alignment coming soon. Are you currently in a relationship?"
+
+    if "money" in msg:
+        return "💰 Financial energy is shifting — new opportunities are opening. Stay aligned and focused."
+
+    if "birth" in msg:
+        return "🔮 Give me your birth date, time, and city for a full reading."
+
+    return "🔮 Ask about love, money, or your future — or provide your birth details for a full reading."
+
+
+# =========================
+# LEAD CAPTURE
+# =========================
 @app.route("/lead", methods=["POST"])
 def lead():
-    try:
-        data = request.json
+    data = request.json
 
-        name = data.get("name")
-        email = data.get("email")
-        phone = data.get("phone")
-        service = data.get("service")
+    name = data.get("name")
+    email = data.get("email")
+    phone = data.get("phone")
+    interest = data.get("interest", "unknown")
 
-        print("🔥 FORM LEAD:", name, email, phone, service)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # 🔥 SEND EMAIL IN BACKGROUND
-        def send_async():
-            html = f"""
-            <h2>🌐 Website Lead</h2>
-            <p><b>Name:</b> {name}</p>
-            <p><b>Email:</b> {email}</p>
-            <p><b>Phone:</b> {phone}</p>
-            <p><b>Service:</b> {service}</p>
-            """
-            send_email("New Website Lead", html)
+    print("🔥 NEW LEAD")
+    print("Name:", name)
+    print("Email:", email)
+    print("Phone:", phone)
+    print("Interest:", interest)
+    print("Time:", timestamp)
 
-        Thread(target=send_async).start()
+    # You already have SendGrid working — keep it here if needed
 
-        return jsonify({"status": "success"})
+    return jsonify({"status": "success"})
 
-    except Exception as e:
-        print("❌ Lead error:", e)
-        return jsonify({"status": "error"})
 
+# =========================
+# HEALTH CHECK
+# =========================
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
+
+# =========================
+# RUN
+# =========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
