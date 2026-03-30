@@ -1,214 +1,122 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import os, json
-from datetime import datetime
-from openai import OpenAI
-import requests
+from flask import Flask, request
+import json
 
 app = Flask(__name__)
-CORS(app)
 
-# =========================
-# CONFIG
-# =========================
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-SENDGRID_KEY = os.getenv("SENDGRID_API_KEY")
-
-client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
-
-LEADS_FILE = "leads.json"
+# ===== MEMORY =====
 sessions = {}
+leads = {}
 
-# =========================
-# MEMORY
-# =========================
-def get_session(user_id):
-    if user_id not in sessions:
-        sessions[user_id] = {
-            "messages": [],
-            "lead": {"name": None, "email": None, "phone": None},
-            "mode": "business"
-        }
-    return sessions[user_id]
+# ===== CONFIG =====
+MISERBOT_PROMPT = """PASTE YOUR MASTER PROMPT HERE LATER"""
 
-# =========================
-# SAVE LEAD + EMAIL
-# =========================
-def save_lead(lead, mode):
-
-    entry = {
-        "name": lead.get("name"),
-        "email": lead.get("email"),
-        "phone": lead.get("phone"),
-        "mode": mode,
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# ===== HELPERS =====
+def normalize_message(data):
+    message = data.get("message", {})
+    return {
+        "channel": "telegram",
+        "user_id": str(message.get("chat", {}).get("id")),
+        "text": message.get("text", "")
     }
 
-    # Save locally
-    data = []
-    if os.path.exists(LEADS_FILE):
-        try:
-            with open(LEADS_FILE, "r") as f:
-                data = json.load(f)
-        except:
-            data = []
+def get_session(user_id):
+    return sessions.setdefault(user_id, [])
 
-    data.append(entry)
+def get_lead(user_id):
+    return leads.setdefault(user_id, {
+        "name": "",
+        "email": "",
+        "phone": "",
+        "need": "",
+        "score": "cold"
+    })
 
-    with open(LEADS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+def classify_intent(text):
+    text = text.lower()
+    if "@" in text:
+        return "email"
+    if any(x in text for x in ["price", "cost"]):
+        return "pricing"
+    if any(x in text for x in ["book", "appointment"]):
+        return "booking"
+    return "general"
 
-    print("🔥 SAVED LEAD:", entry)
+# ===== AI (TEMP) =====
+def call_ai(session, user_text, intent, lead):
+    return {
+        "reply": "Got it — what’s your email?",
+        "actions": [],
+        "lead_update": {}
+    }
 
-    # Send email (SAFE — no hanging)
-    if SENDGRID_KEY:
-        try:
-            requests.post(
-                "https://api.sendgrid.com/v3/mail/send",
-                headers={
-                    "Authorization": f"Bearer {SENDGRID_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "personalizations": [{
-                        "to": [{"email": "Miserbot.ai@gmail.com"}]
-                    }],
-                    "from": {"email": "Miserbot.ai@gmail.com"},
-                    "subject": "🔥 New MiserBot Lead",
-                    "content": [{
-                        "type": "text/plain",
-                        "value": f"""
-Name: {entry['name']}
-Email: {entry['email']}
-Phone: {entry['phone']}
-Mode: {entry['mode']}
-Time: {entry['time']}
-"""
-                    }]
-                },
-                timeout=10
-            )
-            print("📧 Email sent")
-        except Exception as e:
-            print("⚠️ Email failed:", e)
+# ===== ACTIONS =====
+def execute_actions(decision, lead):
+    updates = decision.get("lead_update", {})
+    for k, v in updates.items():
+        if k in lead:
+            lead[k] = v
 
-# =========================
-# LEAD EXTRACTION
-# =========================
-def extract_lead(session, message):
+    if "save_lead" in decision.get("actions", []):
+        print("💾 Lead saved:", lead)
 
-    if not session["lead"]["name"] and len(message.split()) <= 3:
-        session["lead"]["name"] = message.strip()
+    if "send_email" in decision.get("actions", []):
+        print("📧 Email sent")
 
-    elif not session["lead"]["email"] and "@" in message:
-        session["lead"]["email"] = message.strip()
+# ===== REPLY (TEMP) =====
+def send_reply(user_id, text):
+    print(f"📤 Reply to {user_id}: {text}")
 
-    elif not session["lead"]["phone"] and any(c.isdigit() for c in message):
-        session["lead"]["phone"] = message.strip()
-
-# =========================
-# SMART PROMPT (NO LOOPING)
-# =========================
-def build_prompt(mode, lead):
-
-    name = lead.get("name")
-    email = lead.get("email")
-    phone = lead.get("phone")
-
-    if not name:
-        next_step = "Ask for their name naturally."
-    elif not email:
-        next_step = "Ask for their email naturally."
-    elif not phone:
-        next_step = "Ask for their phone naturally."
-    else:
-        next_step = "All info collected."
-
-    base = "You are a high-end AI business consultant."
-
-    return f"""
-{base}
-
-You are also capturing a lead.
-
-STRICT RULES:
-- Never repeat a question
-- Ask only ONE thing at a time
-- Order: name → email → phone
-- Be smooth, confident, human
-
-Current:
-Name: {name}
-Email: {email}
-Phone: {phone}
-
-Next:
-{next_step}
-"""
-
-# =========================
-# ROUTES
-# =========================
+# ===== ROUTES =====
 @app.route("/")
 def home():
-    return "👑 MiserBot Running"
+    return "Miserbot is running"
 
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.json
-    message = data.get("message", "")
-    user_id = request.remote_addr
-
-    print("📩", message)
-
-    session = get_session(user_id)
-
-    extract_lead(session, message)
-
-    if all(session["lead"].values()):
-        save_lead(session["lead"], session["mode"])
-        session["lead"] = {"name": None, "email": None, "phone": None}
-        return jsonify({"reply": "🔥 Done. We’ll contact you shortly."})
-
-    prompt = build_prompt(session["mode"], session["lead"])
-
+@app.route("/webhook", methods=["POST"])
+def webhook():
     try:
-        if not client:
-            raise Exception("No API key")
+        print("🔥 WEBHOOK HIT")
 
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": message}
-            ]
-        )
+        data = request.json
+        msg = normalize_message(data)
 
-        reply = res.choices[0].message.content
+        user_id = msg["user_id"]
+        text = msg["text"]
+
+        print("📩 Incoming:", text)
+
+        # MEMORY
+        session = get_session(user_id)
+        lead = get_lead(user_id)
+
+        # INTENT
+        intent = classify_intent(text)
+        print("🧠 Intent:", intent)
+
+        # AI DECISION
+        decision = call_ai(session, text, intent, lead)
+
+        reply = decision.get("reply", "Got it.")
+        print("🤖 Reply:", reply)
+
+        # ACTIONS
+        execute_actions(decision, lead)
+
+        # REPLY
+        send_reply(user_id, reply)
+
+        # MEMORY UPDATE
+        session.append({"role": "user", "content": text})
+        session.append({"role": "assistant", "content": reply})
+        sessions[user_id] = session[-10:]
+
+        print("🧾 Lead:", lead)
+
+        return "OK", 200
 
     except Exception as e:
-        print("❌ GPT:", e)
-        reply = "Tell me a bit about your business."
+        print("❌ ERROR:", str(e))
+        return "ERROR", 500
 
-    return jsonify({"reply": reply})
-
-# 🔥 FIXED BUTTON ENDPOINT
-@app.route("/lead", methods=["POST"])
-def lead():
-    data = request.json
-
-    save_lead({
-        "name": data.get("name"),
-        "email": data.get("email"),
-        "phone": data.get("phone")
-    }, "form")
-
-    return jsonify({"status": "success"})
-
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok"})
-
-# =========================
+# ===== RUN =====
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=10000)
